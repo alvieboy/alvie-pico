@@ -13,7 +13,6 @@
 
 #define PICO_VFS_BASE_PATH_MAX 16
 #include <stdio.h>
-//#define FILENAME_MAX 128
 
 extern struct _reent * __getreent (void);
 
@@ -115,5 +114,8 @@ void pico_vfs_lock_acquire(vfs_lock_t *lock);
 void pico_vfs_lock_release(vfs_lock_t *lock);
 
 int pico_vfs_concat_path(const char *path1, const char *path2, char *dest, size_t destlen);
+
+void stdio_vfs_init(void);
+
 
 #endif

@@ -734,6 +734,41 @@ void pico_vfs_lock_release(vfs_lock_t *lock)
 
 }
 
+#if LIB_PICO_STDIO
+#include <pico/stdio.h>
+
+extern int _read(int handle, char *buffer, int length);
+extern int _write(int handle, char *buffer, int length);
+
+ssize_t stdio_vfs_write(void *ctx, vfs_fd_t fd, const void *buffer, size_t length)
+{
+    return _read( fd.fd, (void*)buffer, length );
+}
+
+ssize_t stdio_vfs_read(void *ctx, vfs_fd_t fd, void *buffer, size_t length)
+{
+    return _write( fd.fd, buffer, length );
+}
+
+void stdio_vfs_init()
+{
+    vfs_index_t rootindex = pico_vfs_init();
+
+    if (rootindex == 0)
+    {
+        if (pico_vfs_register_fd_range_for_vfs_index(rootindex, 0, 1) ==0)
+        {
+            pico_vfs_ops_t *ops = pico_vfs_get_vfs_ops_for_index(rootindex);
+
+            if (ops) {
+                ops->read = &stdio_vfs_read;
+                ops->write = &stdio_vfs_write;
+            }
+        }
+    }
+}
+#endif
+
 /*
  Aliases for our VFS functions. These implement the newlib syscalls
  */

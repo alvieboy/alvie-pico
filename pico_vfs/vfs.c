@@ -13,7 +13,6 @@
 #define __errno_r(reent) errno
 #endif
 
-#include <stdio.h>
 #include <pico/sync.h>
 #include <pico/platform.h>
 
@@ -34,15 +33,14 @@ typedef struct pico_vfs_entry_ {
     char path_prefix[PICO_VFS_BASE_PATH_MAX]; // path prefix mapped to this VFS
 
     size_t path_prefix_len; // micro-optimization to avoid doing extra strlen
-    uint8_t index;             // index of this structure in s_vfs array
-    void *drvctx; // driver context
+    uint8_t index;          // index of this structure in s_vfs array
+    void *drvctx;           // driver context
 } pico_vfs_entry_t;
 
 typedef struct pico_vfs_internal_dir_
 {
-    struct __dirstream stream;
-    struct dirent dir;
-    int8_t iter;
+    DIR d;
+    struct dirent dir_iter;
 } pico_vfs_internal_dir_t;
 
 #define FD_TABLE_ENTRY_UNUSED   (pico_vfs_fd_table_t) { .vfs_index = -1, .local_fd = { .fd=-1 }, .permanent = false }
@@ -88,27 +86,20 @@ static const pico_vfs_entry_t* pico_vfs_get_vfs_entry_for_path(const char* path)
     const pico_vfs_entry_t* best_match = NULL;
     ssize_t best_match_prefix_len = -1;
     size_t len = strlen(path);
-    //printf("VFS match cnt=%d\n", s_vfs_count);
+
     for (size_t i = 0; i < s_vfs_count; ++i) {
         const pico_vfs_entry_t* vfs = s_vfs[i];
-      /*  if (vfs)
-            printf("VFS match len=%d preflen=%d\r\n", len, vfs->path_prefix_len);
-        else
-            printf("NULL VFS\r\n");
-        */
+    
         if (!vfs || vfs->path_prefix_len == LEN_PATH_PREFIX_IGNORED) {
             continue;
         }
-          /*
-        printf("VFS compare index %d len=%d prefixlen=%d\r\n", i, len, vfs->path_prefix_len);
-        printf("VFS  = '%s' '%s'\r\n", path, vfs->path_prefix);
-            */
 
         // match path prefix
         if (len < vfs->path_prefix_len ||
             memcmp(path, vfs->path_prefix, vfs->path_prefix_len) != 0) {
             continue;
         }
+
         // this is the default VFS and we don't have a better match yet.
         if (vfs->path_prefix_len == 0 && !best_match) {
             best_match = vfs;
@@ -131,7 +122,6 @@ static const pico_vfs_entry_t* pico_vfs_get_vfs_entry_for_path(const char* path)
             best_match = vfs;
         }
     }
-    //printf("VFS: return %s\r\n", best_match ? best_match->path_prefix : NULL);
 
     return best_match;
 }
@@ -255,7 +245,6 @@ int pico_vfs_unregister(vfs_index_t index)
     pico_vfs_table_lock();
     pico_vfs_entry_t* vfs = s_vfs[index];
     if (NULL!=vfs) {
-        printf("Unregistering %s\n", vfs->path_prefix);
         strcpy( path, vfs->path_prefix );
         free(vfs);
         s_vfs[index] = NULL;
@@ -306,12 +295,6 @@ vfs_index_t pico_vfs_register_fd_range(const pico_vfs_ops_t *vfs, void *drvctx, 
     if (ret == 0) {
         ret = pico_vfs_register_fd_range_for_vfs_index(index, min_fd, max_fd);
         if (ret !=0) {
-#if 0
-            pico_vfs_table_lock();
-            free(s_vfs[index]);
-            s_vfs[index] = NULL;
-            pico_vfs_table_unlock();
-#endif
             index = -1;
         }
     } else {
@@ -424,7 +407,6 @@ int pico_vfs_stat(struct _reent *r, const char *path, struct stat * st)
     const pico_vfs_entry_t* vfs = pico_vfs_get_vfs_entry_for_path(path);
 
     if (vfs == NULL) {
-        printf("Cannot open file %s (invalid vfs)\n", path);
         __errno_r(r) = ENOENT;
         return -1;
     }
@@ -461,12 +443,9 @@ int pico_vfs_ioctl(int fd, int cmd, ...)
 
 int pico_vfs_open(struct _reent *r, const char * path, int flags, int mode)
 {
-    printf("Opening %s\n", path);
-
     const pico_vfs_entry_t* vfs = pico_vfs_get_vfs_entry_for_path(path);
 
     if (vfs == NULL) {
-        printf("Cannot open file %s (invalid vfs)\n", path);
         __errno_r(r) = ENOENT;
         return -1;
     }
@@ -511,9 +490,7 @@ int pico_vfs_open(struct _reent *r, const char * path, int flags, int mode)
         __errno_r(r) = ENFILE;
         return -1;
 
-    } else {
-        printf("Cannot open file %s\n", path);
-    }
+    } 
     return ret;
 }
 
@@ -611,8 +588,6 @@ void pico_vfs_seekdir(DIR* pdir, long loc)
 
 static DIR* pico_vfs_root_opendir(void *ctx, const char* name)
 {
-    //printf("ROOT_OPENDIR: attempt open %s\r\n", name);
-
     struct _reent* r = __getreent();
 
     if (name==NULL || name[0]=='\0') {
@@ -622,9 +597,8 @@ static DIR* pico_vfs_root_opendir(void *ctx, const char* name)
     if ((name[0] =='/' && name[1]=='\0')) {
 
         pico_vfs_internal_dir_t *handle = malloc(sizeof(pico_vfs_internal_dir_t));
-        handle->iter = 0;
-        handle->stream.vfs_index = 0;
-
+        handle->d.d_off = 0;
+        handle->d.vfs_index = 0;
         return (DIR*)handle;
 
     } else {
@@ -642,15 +616,26 @@ static int pico_vfs_root_closedir(void *ctx, DIR *d)
     return -EINVAL;
 }
 
+static void pico_vfs_root_seekdir(void *ctx, DIR *d, long loc)
+{
+    if (loc >=0 && loc < VFS_MAX_COUNT) {
+        d->d_off = loc;
+    }
+}
+
+static long pico_vfs_root_telldir(void *ctx, DIR *d)
+{
+    return d->d_off;
+}
+
 static struct dirent *pico_vfs_root_readdir(void *ctx, DIR *d)
 {
     pico_vfs_internal_dir_t *dir = (pico_vfs_internal_dir_t*)d;
-    int cindex = dir->iter;
+    int cindex = dir->d.d_off;
+
     pico_vfs_entry_t *vfs = NULL;
     const char *path;
-
-    //printf("ROOT_READDIR\r\n");
-
+    
     if (cindex >= VFS_MAX_COUNT)
         return NULL;
 
@@ -670,15 +655,15 @@ static struct dirent *pico_vfs_root_readdir(void *ctx, DIR *d)
     if (path[0]=='/')
         path++;
 
-    //printf("VFS: found entry %d %s\r\n", cindex, path);
     cindex++;
-    dir->iter = cindex;
+    dir->d.d_off = cindex;
 
     // Fill in information
-    dir->dir.d_type = DT_DIR;
-    dir->dir.d_reclen = sizeof(struct dirent);
-    strcpy(dir->dir.d_name, path);
-    return &dir->dir;
+    dir->dir_iter.d_type = DT_DIR;
+    dir->dir_iter.d_reclen = sizeof(struct dirent);
+    strcpy(dir->dir_iter.d_name, path);
+
+    return &dir->dir_iter;
 }
 
 vfs_index_t pico_vfs_init(void)
@@ -703,7 +688,9 @@ vfs_index_t pico_vfs_init(void)
     {
         .opendir  = &pico_vfs_root_opendir,
         .closedir = &pico_vfs_root_closedir,
-        .readdir = &pico_vfs_root_readdir
+        .readdir = &pico_vfs_root_readdir,
+        .seekdir = &pico_vfs_root_seekdir,
+        .telldir = &pico_vfs_root_telldir
     };
     int index = -1;
     int ret = pico_vfs_register_common("",

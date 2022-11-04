@@ -40,7 +40,7 @@ typedef struct pico_vfs_entry_ {
 typedef struct pico_vfs_internal_dir_
 {
     DIR d;
-    struct dirent dir_iter;
+    unsigned short d_off; // Offset
 } pico_vfs_internal_dir_t;
 
 #define FD_TABLE_ENTRY_UNUSED   (pico_vfs_fd_table_t) { .vfs_index = -1, .local_fd = { .fd=-1 }, .permanent = false }
@@ -597,7 +597,7 @@ static DIR* pico_vfs_root_opendir(void *ctx, const char* name)
     if ((name[0] =='/' && name[1]=='\0')) {
 
         pico_vfs_internal_dir_t *handle = malloc(sizeof(pico_vfs_internal_dir_t));
-        handle->d.d_off = 0;
+        handle->d_off = 0;
         handle->d.vfs_index = 0;
         return (DIR*)handle;
 
@@ -618,20 +618,24 @@ static int pico_vfs_root_closedir(void *ctx, DIR *d)
 
 static void pico_vfs_root_seekdir(void *ctx, DIR *d, long loc)
 {
+    pico_vfs_internal_dir_t *dir = (pico_vfs_internal_dir_t*)d;
+
     if (loc >=0 && loc < VFS_MAX_COUNT) {
-        d->d_off = loc;
+        dir->d_off = loc;
     }
 }
 
 static long pico_vfs_root_telldir(void *ctx, DIR *d)
 {
-    return d->d_off;
+    pico_vfs_internal_dir_t *dir = (pico_vfs_internal_dir_t*)d;
+
+    return dir->d_off;
 }
 
 static struct dirent *pico_vfs_root_readdir(void *ctx, DIR *d)
 {
     pico_vfs_internal_dir_t *dir = (pico_vfs_internal_dir_t*)d;
-    int cindex = dir->d.d_off;
+    int cindex = dir->d_off;
 
     pico_vfs_entry_t *vfs = NULL;
     const char *path;
@@ -656,14 +660,14 @@ static struct dirent *pico_vfs_root_readdir(void *ctx, DIR *d)
         path++;
 
     cindex++;
-    dir->d.d_off = cindex;
+    dir->d_off = cindex;
 
     // Fill in information
-    dir->dir_iter.d_type = DT_DIR;
-    dir->dir_iter.d_reclen = sizeof(struct dirent);
-    strcpy(dir->dir_iter.d_name, path);
+    d->dir_iter.d_type = DT_DIR;
+    d->dir_iter.d_reclen = sizeof(struct dirent);
+    strcpy(d->dir_iter.d_name, path);
 
-    return &dir->dir_iter;
+    return &d->dir_iter;
 }
 
 vfs_index_t pico_vfs_init(void)

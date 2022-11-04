@@ -31,7 +31,6 @@ struct __dirstream
     // For non-reentrant readdir
     struct dirent dir_iter;
     void *drvdata;
-    unsigned short d_off;
 };
 
 static inline void *pico_vfs_dir_get_drvdata(DIR*d)
@@ -68,6 +67,7 @@ typedef struct _pico_vfs_ops
 
     DIR* (*opendir)(void *drvctx, const char* name);
     struct dirent* (*readdir)(void *drvctx, DIR* pdir);
+    // readdir_r is obsolete.
     int (*readdir_r)(void *drvctx, DIR* pdir, struct dirent* entry, struct dirent** out_dirent);
     long (*telldir)(void *drvctx, DIR* pdir);
     void (*seekdir)(void *drvctx, DIR* pdir, long offset);

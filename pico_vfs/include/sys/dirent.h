@@ -25,8 +25,8 @@ enum
 
 struct dirent
   {
-    int d_ino;
-    int d_off;
+    //int d_ino;
+//    unsigned short int d_off;
     unsigned short int d_reclen;
     unsigned char d_type;
     char d_name[256];		/* We must not include limits.h! */
